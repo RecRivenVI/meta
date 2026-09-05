@@ -122,8 +122,8 @@ def compute_jar_file(path, url, fallback_url=None):
             allinfo = jar.infolist()
             for info in allinfo:
                 tstamp_new = datetime(*info.date_time)
-            if tstamp_new > tstamp:
-                tstamp = tstamp_new
+                if tstamp_new > tstamp:
+                    tstamp = tstamp_new
 
     existing_info_path = path + ".json"
     if os.path.isfile(existing_info_path):

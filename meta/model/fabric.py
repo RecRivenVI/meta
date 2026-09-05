@@ -38,5 +38,5 @@ class FabricInstallerDataV1(MetaBase):
 
 class FabricJarInfo(MetaBase):
     release_time: Optional[datetime] = Field(alias="releaseTime")
-    # Populated by the updater when the coordinate was fetched from a fallback.
+    # Internal upstream provenance; this is not part of Prism Metadata.
     maven_url: Optional[str] = Field(None, alias="mavenUrl")
