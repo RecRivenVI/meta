@@ -5,7 +5,7 @@ from operator import attrgetter
 from typing import Collection
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path, eprint
-from meta.common.bmclapi import route_meta_version_urls
+from meta.common.bmclapi import route_meta_version_urls, uses_bmclapi_source
 from meta.common.forge import (
     FORGE_COMPONENT,
     INSTALLER_MANIFEST_DIR,
@@ -57,6 +57,26 @@ def load_mc_version_filter(version: str):
     libs = set(map(attrgetter("name"), v.libraries))
     mc_version_cache[version] = libs
     return libs
+
+
+def uses_bmclapi_for_version(
+    version: ForgeVersion, legacy_info_list: ForgeLegacyInfoList
+) -> bool:
+    installer_info_path = os.path.join(
+        UPSTREAM_DIR, INSTALLER_INFO_DIR, f"{version.long_version}.json"
+    )
+    if os.path.isfile(installer_info_path):
+        return uses_bmclapi_source(
+            InstallerInfo.parse_file(installer_info_path).bmclapi
+        )
+
+    legacy_info = legacy_info_list.number.get(str(version.build))
+    if legacy_info is not None:
+        # Legacy entries predate provenance and BMCLAPI does not promise the
+        # separate old FML/Forge coverage. Preserve their official route
+        # unless the updater explicitly confirmed BMCLAPI for this artifact.
+        return legacy_info.bmclapi is True
+    return True
 
 
 """
@@ -449,7 +469,10 @@ def main():
 
                 v = version_from_legacy(legacy_info_list.number[str(build)], version)
 
-        route_meta_version_urls(v).write(
+        route_meta_version_urls(
+            v,
+            use_bmclapi=uses_bmclapi_for_version(version, legacy_info_list),
+        ).write(
             os.path.join(LAUNCHER_DIR, FORGE_COMPONENT, f"{v.version}.json")
         )
 

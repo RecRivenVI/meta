@@ -10,6 +10,7 @@ from meta.common.bmclapi import (
     BMCLAPI_MOJANG_JAVA_URL,
     BMCLAPI_REQUEST_TIMEOUT_SECONDS,
     BMCLAPI_MOJANG_VERSION_MANIFEST_URL,
+    is_bmclapi_url,
     route_download_url,
 )
 from meta.common.http import download_binary_file
@@ -41,7 +42,7 @@ ensure_upstream_dir(ASSETS_DIR)
 sess = default_session()
 
 
-def get_mojang_response(url, fallback_url=None):
+def get_mojang_response_with_source(url, fallback_url=None):
     candidates = [route_download_url(url)]
     if url not in candidates:
         candidates.append(url)
@@ -55,7 +56,7 @@ def get_mojang_response(url, fallback_url=None):
                 candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
             )
             response.raise_for_status()
-            return response
+            return response, candidate
         except requests.RequestException as error:
             last_error = error
             if candidate != candidates[-1]:
@@ -63,6 +64,10 @@ def get_mojang_response(url, fallback_url=None):
 
     assert last_error is not None
     raise last_error
+
+
+def get_mojang_response(url, fallback_url=None):
+    return get_mojang_response_with_source(url, fallback_url)[0]
 
 
 def download_mojang_file(path, url):
@@ -76,7 +81,7 @@ def download_mojang_file(path, url):
             download_binary_file(
                 sess, path, candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
             )
-            return
+            return candidate
         except requests.RequestException as error:
             last_error = error
             if candidate != candidates[-1]:
@@ -88,7 +93,7 @@ def download_mojang_file(path, url):
 
 def fetch_zipped_version(path, url):
     zip_path = f"{path}.zip"
-    download_mojang_file(zip_path, url)
+    source_url = download_mojang_file(zip_path, url)
     with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
             if info.filename.endswith(".json"):
@@ -99,6 +104,7 @@ def fetch_zipped_version(path, url):
     assert version_json
 
     version_json["type"] = "experiment"
+    version_json["bmclapi"] = is_bmclapi_url(source_url)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(version_json, f, sort_keys=True, indent=4)
@@ -107,7 +113,7 @@ def fetch_zipped_version(path, url):
 
 
 def fetch_modified_version(path, version):
-    r = get_mojang_response(version.url)
+    r, source_url = get_mojang_response_with_source(version.url)
     version_json = r.json()
 
     version_json["releaseTime"] = version_json["releaseTime"] + "T00:00:00+02:00"
@@ -119,6 +125,7 @@ def fetch_modified_version(path, version):
 
     version_json["downloads"] = downloads
     version_json["type"] = "old_snapshot"
+    version_json["bmclapi"] = is_bmclapi_url(source_url)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(version_json, f, sort_keys=True, indent=4)
@@ -127,8 +134,9 @@ def fetch_modified_version(path, version):
 
 
 def fetch_version(path, url):
-    r = get_mojang_response(url)
+    r, source_url = get_mojang_response_with_source(url)
     version_json = r.json()
+    version_json["bmclapi"] = is_bmclapi_url(source_url)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(version_json, f, sort_keys=True, indent=4)
@@ -140,9 +148,16 @@ MOJANG_JAVA_URL = "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0c
 
 
 def update_javas():
-    r = get_mojang_response(BMCLAPI_MOJANG_JAVA_URL, MOJANG_JAVA_URL)
+    r, source_url = get_mojang_response_with_source(
+        BMCLAPI_MOJANG_JAVA_URL, MOJANG_JAVA_URL
+    )
 
     remote_javas = JavaIndex(__root__=r.json())
+    use_bmclapi = is_bmclapi_url(source_url)
+    for os_name in remote_javas:
+        for component in remote_javas[os_name]:
+            for runtime in remote_javas[os_name][component]:
+                runtime.manifest.bmclapi = use_bmclapi
 
     java_manifest_path = os.path.join(UPSTREAM_DIR, JAVA_MANIFEST_FILE)
 

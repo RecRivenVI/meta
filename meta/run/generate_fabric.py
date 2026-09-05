@@ -7,7 +7,11 @@ from meta.common import (
     upstream_path,
     transform_maven_key,
 )
-from meta.common.bmclapi import BMCLAPI_MAVEN_URL, route_meta_version_urls
+from meta.common.bmclapi import (
+    BMCLAPI_MAVEN_URL,
+    route_meta_version_urls,
+    uses_bmclapi_source,
+)
 from meta.common.fabric import (
     JARS_DIR,
     INSTALLER_INFO_DIR,
@@ -60,7 +64,9 @@ def process_loader_version(entry) -> MetaVersion:
         url=jar_info.maven_url or BMCLAPI_MAVEN_URL,
     )
     v.libraries.append(loader_lib)
-    route_meta_version_urls(v)
+    route_meta_version_urls(
+        v, use_bmclapi=uses_bmclapi_source(installer_info.bmclapi)
+    )
     if jar_info.maven_url:
         loader_lib.url = jar_info.maven_url
     return v

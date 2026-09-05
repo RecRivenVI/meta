@@ -5,7 +5,7 @@ from typing import Optional
 from functools import reduce
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path
-from meta.common.bmclapi import route_download_url
+from meta.common.bmclapi import route_download_url, uses_bmclapi_source
 
 from meta.common.java import (
     JAVA_MINECRAFT_COMPONENT,
@@ -182,10 +182,14 @@ def mojang_runtime_to_java_runtime(
         buildstr=buildstr,
         name=mojang_runtime.version.name,
     )
+    manifest_url = mojang_runtime.manifest.url
+    if uses_bmclapi_source(mojang_runtime.manifest.bmclapi):
+        manifest_url = route_download_url(manifest_url)
+
     return JavaRuntimeMeta(
         name=mojang_component,
         vendor="mojang",
-        url=mojang_runtime.manifest.url,
+        url=manifest_url,
         releaseTime=mojang_runtime.version.released,
         checksum=JavaChecksumMeta(
             type=JavaChecksumType.Sha1, hash=mojang_runtime.manifest.sha1
@@ -290,10 +294,6 @@ def writeJavas(javas: dict[int, list[JavaRuntimeMeta]], uid: str):
 
     # small hack to sort the versions after major
     javas = dict(sorted(javas.items(), key=lambda item: item[0]))
-    for runtimes in javas.values():
-        for runtime in runtimes:
-            runtime.url = route_download_url(runtime.url)
-
     timestamps: dict[int, datetime.datetime | None] = {}
     prevDate: datetime.datetime | None = None
     for major, runtimes in javas.items():

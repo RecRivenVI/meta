@@ -34,6 +34,8 @@ class FabricInstallerDataV1(MetaBase):
     main_class: Optional[Union[str, FabricMainClasses]] = Field(alias="mainClass")
     arguments: Optional[FabricInstallerArguments]
     launchwrapper: Optional[FabricInstallerLaunchwrapper]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
 
 class FabricJarInfo(MetaBase):

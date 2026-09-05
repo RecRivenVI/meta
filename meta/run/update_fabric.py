@@ -17,6 +17,7 @@ from meta.common.bmclapi import (
     BMCLAPI_FABRIC_META_URL,
     BMCLAPI_MAVEN_URL,
     BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    is_bmclapi_url,
 )
 from meta.common.fabric import (
     JARS_DIR,
@@ -47,7 +48,7 @@ def get_maven_url(maven_key, server, ext):
     return maven_url
 
 
-def get_json_file(path, url, fallback_url=None):
+def get_json_file(path, url, fallback_url=None, record_source=False):
     candidates = [url]
     if fallback_url is not None and fallback_url not in candidates:
         candidates.append(fallback_url)
@@ -58,6 +59,8 @@ def get_json_file(path, url, fallback_url=None):
             r = sess.get(candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
             r.raise_for_status()
             version_json = r.json()
+            if record_source and isinstance(version_json, dict):
+                version_json["bmclapi"] = is_bmclapi_url(candidate)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(version_json, f, sort_keys=True, indent=4)
             return version_json
@@ -166,6 +169,7 @@ def get_json_file_concurrent(it):
         os.path.join(UPSTREAM_DIR, INSTALLER_INFO_DIR, f"{it['version']}.json"),
         maven_url,
         official_maven_url,
+        record_source=True,
     )
     print(f"Downloading JAR info for loader {it['version']} Done")
 

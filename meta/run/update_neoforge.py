@@ -30,6 +30,7 @@ from meta.common import (
 from meta.common.bmclapi import (
     BMCLAPI_NEOFORGE_META_URL,
     BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    is_bmclapi_url,
     route_download_url,
 )
 from meta.common.http import download_binary_file
@@ -308,12 +309,15 @@ def process_neoforge_version(key, entry):
                     profileFile.close()
 
     # installer info v1
-    if not os.path.isfile(installer_info_path):
+    if os.path.isfile(installer_info_path):
+        installer_info = InstallerInfo.parse_file(installer_info_path)
+    else:
         installer_info = InstallerInfo()
         installer_info.sha1hash = file_hash(jar_path, hashlib.sha1)
         installer_info.sha256hash = file_hash(jar_path, hashlib.sha256)
         installer_info.size = os.path.getsize(jar_path)
-        installer_info.write(installer_info_path)
+    installer_info.bmclapi = is_bmclapi_url(download_url)
+    installer_info.write(installer_info_path)
 
 
 def main():

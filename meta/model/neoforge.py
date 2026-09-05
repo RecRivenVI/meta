@@ -171,6 +171,8 @@ class InstallerInfo(MetaBase):
     sha1hash: Optional[str]
     sha256hash: Optional[str]
     size: Optional[int]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
 
 # A post-processed entry constructed from the reconstructed NeoForge version index

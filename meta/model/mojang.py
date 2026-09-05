@@ -209,6 +209,8 @@ class MojangJavaIndexManifest(MetaBase):
     sha1: str
     size: int
     url: str
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
 
 class MojangJavaIndexVersion(MetaBase):
@@ -288,6 +290,8 @@ class MojangVersion(MetaBase):
     logging: Optional[Dict[str, MojangLogging]]  # TODO improve this?
     compliance_level: Optional[int] = Field(alias="complianceLevel")
     javaVersion: Optional[JavaVersion]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
     def to_meta_version(self, name: str, uid: str, version: str) -> MetaVersion:
         main_jar = None

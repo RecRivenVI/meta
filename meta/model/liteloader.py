@@ -110,3 +110,5 @@ class LiteloaderMeta(MetaBase):
 class LiteloaderIndex(MetaBase):
     meta: LiteloaderMeta
     versions: Dict[Any, LiteloaderEntry]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]

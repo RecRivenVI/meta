@@ -5,7 +5,7 @@ from operator import attrgetter
 from typing import Collection
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path, eprint
-from meta.common.bmclapi import route_meta_version_urls
+from meta.common.bmclapi import route_meta_version_urls, uses_bmclapi_source
 from meta.common.neoforge import (
     NEOFORGE_COMPONENT,
     INSTALLER_MANIFEST_DIR,
@@ -36,6 +36,17 @@ LAUNCHER_DIR = launcher_path()
 UPSTREAM_DIR = upstream_path()
 
 ensure_component_dir(NEOFORGE_COMPONENT)
+
+
+def uses_bmclapi_for_version(version: NeoForgeVersion) -> bool:
+    installer_info_path = os.path.join(
+        UPSTREAM_DIR, INSTALLER_INFO_DIR, f"{version.long_version}.json"
+    )
+    if os.path.isfile(installer_info_path):
+        return uses_bmclapi_source(
+            InstallerInfo.parse_file(installer_info_path).bmclapi
+        )
+    return True
 
 
 def version_from_build_system_installer(
@@ -152,7 +163,10 @@ def main():
                 % (key, profile.minecraft)
             )
             continue
-        route_meta_version_urls(v).write(
+        route_meta_version_urls(
+            v,
+            use_bmclapi=uses_bmclapi_for_version(version),
+        ).write(
             os.path.join(LAUNCHER_DIR, NEOFORGE_COMPONENT, f"{v.version}.json")
         )
 

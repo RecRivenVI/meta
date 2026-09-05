@@ -144,6 +144,8 @@ class ForgeLegacyInfo(MetaBase):
     size: Optional[int]
     sha256: Optional[str]
     sha1: Optional[str]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
 
 class ForgeLegacyInfoList(MetaBase):
@@ -185,6 +187,8 @@ class InstallerInfo(MetaBase):
     sha1hash: Optional[str]
     sha256hash: Optional[str]
     size: Optional[int]
+    # Upstream-only provenance marker; never emitted in Prism Metadata.
+    bmclapi: Optional[bool]
 
 
 # A post-processed entry constructed from the reconstructed Forge version index

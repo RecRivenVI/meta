@@ -9,7 +9,7 @@ from packaging import version as pversion
 from typing import Optional, List
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path
-from meta.common.bmclapi import route_meta_version_urls
+from meta.common.bmclapi import route_meta_version_urls, uses_bmclapi_source
 from meta.common.mojang import (
     STATIC_LEGACY_SERVICES_FILE,
     VERSION_MANIFEST_FILE,
@@ -160,12 +160,12 @@ def sort_libs_by_name(library):
     return library.name
 
 
-LWJGLEntry = namedtuple("LWJGLEntry", ("version", "sha1"))
+LWJGLEntry = namedtuple("LWJGLEntry", ("version", "sha1", "use_bmclapi"))
 
 lwjglVersionVariants = defaultdict(list)
 
 
-def add_lwjgl_version(variants, lwjgl):
+def add_lwjgl_version(variants, lwjgl, use_bmclapi=True):
     lwjgl_copy = copy.deepcopy(lwjgl)
     libraries = list(lwjgl_copy.libraries)
     libraries.sort(key=sort_libs_by_name)
@@ -174,14 +174,22 @@ def add_lwjgl_version(variants, lwjgl):
     version = lwjgl_copy.version
     current_hash = hash_lwjgl_version(lwjgl_copy)
     found = False
-    for variant in variants[version]:
+    for index, variant in enumerate(variants[version]):
         existing_hash = variant.sha1
         if current_hash == existing_hash:
             found = True
+            if use_bmclapi and not variant.use_bmclapi:
+                variants[version][index] = variant._replace(use_bmclapi=True)
             break
     if not found:
         print("!!! New variant for LWJGL version %s" % version)
-        variants[version].append(LWJGLEntry(version=lwjgl_copy, sha1=current_hash))
+        variants[version].append(
+            LWJGLEntry(
+                version=lwjgl_copy,
+                sha1=current_hash,
+                use_bmclapi=use_bmclapi,
+            )
+        )
 
 
 def remove_paths_from_lib(lib):
@@ -262,7 +270,11 @@ def patch_library(lib: Library, patches: LibraryPatches) -> List[Library]:
     return new_libraries
 
 
-def process_single_variant(lwjgl_variant: MetaVersion, patches: LibraryPatches):
+def process_single_variant(
+    lwjgl_variant: MetaVersion,
+    patches: LibraryPatches,
+    use_bmclapi: bool = True,
+):
     lwjgl_version = lwjgl_variant.version
     v = copy.deepcopy(lwjgl_variant)
 
@@ -318,7 +330,7 @@ def process_single_variant(lwjgl_variant: MetaVersion, patches: LibraryPatches):
                     good = False
                     break
     if good:
-        route_meta_version_urls(v).write(filename)
+        route_meta_version_urls(v, use_bmclapi=use_bmclapi).write(filename)
     else:
         print("Skipped LWJGL", v.version)
 
@@ -351,6 +363,7 @@ def main():
             continue
         print("Processing", filename)
         mojang_version = MojangVersion.parse_file(input_file)
+        use_bmclapi = uses_bmclapi_source(mojang_version.bmclapi)
         v = mojang_version.to_meta_version(
             "Minecraft", MINECRAFT_COMPONENT, mojang_version.id
         )
@@ -448,7 +461,7 @@ def main():
             for key in buckets:
                 lwjgl = buckets[key]
                 lwjgl.libraries = sorted(lwjgl.libraries, key=attrgetter("name"))
-                add_lwjgl_version(lwjglVersionVariants, lwjgl)
+                add_lwjgl_version(lwjglVersionVariants, lwjgl, use_bmclapi)
                 print("Found only candidate LWJGL", lwjgl.version, key)
         else:
             # multiple buckets for LWJGL. [None] is common to all, other keys are for different sets of rules
@@ -463,7 +476,7 @@ def main():
                     )
                 else:
                     lwjgl.libraries = sorted(lwjgl.libraries, key=attrgetter("name"))
-                add_lwjgl_version(lwjglVersionVariants, lwjgl)
+                add_lwjgl_version(lwjglVersionVariants, lwjgl, use_bmclapi)
                 print("Found candidate LWJGL", lwjgl.version, key)
             # remove the common bucket...
             if None in buckets:
@@ -531,7 +544,7 @@ def main():
                 v.additional_traits.append("legacyLaunch")
             v.additional_traits.append("texturepacks")
 
-        route_meta_version_urls(v).write(out_filename)
+        route_meta_version_urls(v, use_bmclapi=use_bmclapi).write(out_filename)
 
     for lwjglVersionVariant in lwjglVersionVariants:
         decided_variant = None
@@ -566,7 +579,11 @@ def main():
         print("")
 
         if decided_variant and passed_variants == 1 and unknown_variants == 0:
-            process_single_variant(decided_variant.version, library_patches)
+            process_single_variant(
+                decided_variant.version,
+                library_patches,
+                decided_variant.use_bmclapi,
+            )
         else:
             raise Exception(
                 "No variant decided for version %s out of %d possible ones and %d unknown ones."

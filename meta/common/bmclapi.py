@@ -11,6 +11,9 @@ BMCLAPI_MAVEN_URL = f"{BMCLAPI_BASE_URL}/maven/"
 BMCLAPI_FABRIC_META_URL = f"{BMCLAPI_BASE_URL}/fabric-meta"
 BMCLAPI_FORGE_API_URL = f"{BMCLAPI_BASE_URL}/forge"
 BMCLAPI_NEOFORGE_META_URL = f"{BMCLAPI_BASE_URL}/neoforge/meta"
+BMCLAPI_LITELOADER_MAVEN_URL = (
+    f"{BMCLAPI_BASE_URL}/maven/com/mumfrey/liteloader/"
+)
 BMCLAPI_MOJANG_VERSION_MANIFEST_URL = (
     f"{BMCLAPI_BASE_URL}/mc/game/version_manifest_v2.json"
 )
@@ -104,6 +107,20 @@ def route_download_url(url: str) -> str:
     return url
 
 
+def is_bmclapi_url(url: str) -> bool:
+    if not url:
+        return False
+    source = urlparse(url)
+    mirror = urlparse(BMCLAPI_BASE_URL)
+    return source.scheme == mirror.scheme and source.netloc == mirror.netloc
+
+
+def uses_bmclapi_source(source: bool | None) -> bool:
+    # Existing upstream data predates provenance markers and follows the
+    # BMCLAPI route by default.
+    return source is not False
+
+
 def _route_library(library: Any) -> None:
     if library is None:
         return
@@ -113,6 +130,13 @@ def _route_library(library: Any) -> None:
 
     downloads = getattr(library, "downloads", None)
     if downloads is None:
+        # PrismLauncher uses libraries.minecraft.net when a named library has
+        # no explicit repository. Make that implicit route visible in the
+        # generated metadata when BMCLAPI is the selected upstream.
+        if getattr(library, "name", None) is not None and not getattr(
+            library, "url", None
+        ):
+            library.url = BMCLAPI_MAVEN_URL
         return
 
     artifact = getattr(downloads, "artifact", None)
@@ -125,8 +149,11 @@ def _route_library(library: Any) -> None:
             classifier.url = route_download_url(classifier.url)
 
 
-def route_meta_version_urls(version: Any) -> Any:
+def route_meta_version_urls(version: Any, use_bmclapi: bool = True) -> Any:
     """Apply the BMCLAPI routes to URL-bearing Prism model fields."""
+
+    if not use_bmclapi:
+        return version
 
     asset_index = getattr(version, "asset_index", None)
     if asset_index is not None:

@@ -31,6 +31,7 @@ from meta.common.bmclapi import (
     BMCLAPI_FORGE_API_URL,
     BMCLAPI_MAVEN_URL,
     BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    is_bmclapi_url,
     route_download_url,
 )
 from meta.common.forge import (
@@ -357,12 +358,15 @@ def process_forge_version(version, jar_path):
                     profileFile.close()
 
     # installer info v1
-    if not os.path.isfile(installer_info_path):
+    if os.path.isfile(installer_info_path):
+        installer_info = InstallerInfo.parse_file(installer_info_path)
+    else:
         installer_info = InstallerInfo()
         installer_info.sha1hash = file_hash(jar_path, hashlib.sha1)
         installer_info.sha256hash = file_hash(jar_path, hashlib.sha256)
         installer_info.size = os.path.getsize(jar_path)
-        installer_info.write(installer_info_path)
+    installer_info.bmclapi = is_bmclapi_url(download_url)
+    installer_info.write(installer_info_path)
 
 
 def main():
@@ -517,9 +521,9 @@ def main():
 
                 # only gather legacy info if it's missing
                 if not os.path.isfile(LEGACYINFO_PATH):
+                    download_url, _ = select_forge_download_url(version.url())
                     # grab the jar/zip if it's not there
                     if not os.path.isfile(jar_path):
-                        download_url, _ = select_forge_download_url(version.url())
                         download_binary_file(
                             sess,
                             jar_path,
@@ -538,6 +542,7 @@ def main():
                     legacy_info.sha1 = file_hash(jar_path, hashlib.sha1)
                     legacy_info.sha256 = file_hash(jar_path, hashlib.sha256)
                     legacy_info.size = os.path.getsize(jar_path)
+                    legacy_info.bmclapi = is_bmclapi_url(download_url)
                     legacy_info_list.number[key] = legacy_info
         for f in futures:
             f.result()

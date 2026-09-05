@@ -3,6 +3,11 @@ from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path
+from meta.common.bmclapi import (
+    BMCLAPI_LITELOADER_MAVEN_URL,
+    route_meta_version_urls,
+    uses_bmclapi_source,
+)
 from meta.common.liteloader import LITELOADER_COMPONENT, VERSIONS_FILE
 from meta.common.mojang import MINECRAFT_COMPONENT
 from meta.model import MetaVersion, GradleSpecifier, Library, MetaPackage, Dependency
@@ -15,7 +20,10 @@ ensure_component_dir(LITELOADER_COMPONENT)
 
 
 def process_artefacts(
-    mc_version: str, artefacts: Dict[str, LiteloaderArtefact], is_snapshot: bool
+    mc_version: str,
+    artefacts: Dict[str, LiteloaderArtefact],
+    is_snapshot: bool,
+    use_bmclapi: bool,
 ) -> Tuple[List[MetaVersion], Optional[MetaVersion]]:
     versions: List[MetaVersion] = []
     lookup: Dict[str, MetaVersion] = {}
@@ -50,11 +58,16 @@ def process_artefacts(
 
         liteloader_lib = Library(
             name=GradleSpecifier("com.mumfrey", "liteloader", v.version),
-            url="http://dl.liteloader.com/versions/",
+            url=(
+                BMCLAPI_LITELOADER_MAVEN_URL
+                if use_bmclapi
+                else "http://dl.liteloader.com/versions/"
+            ),
         )
         if is_snapshot:
             liteloader_lib.mmcHint = "always-stale"
         v.libraries.append(liteloader_lib)
+        route_meta_version_urls(v, use_bmclapi=use_bmclapi)
 
         versions.append(v)
         lookup[v.version] = v
@@ -67,6 +80,7 @@ def process_artefacts(
 def process_versions(index: LiteloaderIndex) -> Tuple[List[MetaVersion], List[str]]:
     all_versions: List[MetaVersion] = []
     recommended: List[str] = []
+    use_bmclapi = uses_bmclapi_source(index.bmclapi)
     for mcVersion, versionObject in index.versions.items():
         # ignore this for now. It should be a jar mod or something.
         if mcVersion == "1.5.2":
@@ -75,12 +89,12 @@ def process_versions(index: LiteloaderIndex) -> Tuple[List[MetaVersion], List[st
         latest_release = None
         if versionObject.artefacts:
             versions, latest_release = process_artefacts(
-                mcVersion, versionObject.artefacts.liteloader, False
+                mcVersion, versionObject.artefacts.liteloader, False, use_bmclapi
             )
             all_versions.extend(versions)
         if versionObject.snapshots:
             versions, latest_snapshot = process_artefacts(
-                mcVersion, versionObject.snapshots.liteloader, True
+                mcVersion, versionObject.snapshots.liteloader, True, use_bmclapi
             )
             all_versions.extend(versions)
 
