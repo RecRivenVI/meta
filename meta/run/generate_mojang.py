@@ -9,6 +9,7 @@ from packaging import version as pversion
 from typing import Optional, List
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path
+from meta.common.bmclapi import route_meta_version_urls
 from meta.common.mojang import (
     STATIC_LEGACY_SERVICES_FILE,
     VERSION_MANIFEST_FILE,
@@ -317,7 +318,7 @@ def process_single_variant(lwjgl_variant: MetaVersion, patches: LibraryPatches):
                     good = False
                     break
     if good:
-        v.write(filename)
+        route_meta_version_urls(v).write(filename)
     else:
         print("Skipped LWJGL", v.version)
 
@@ -530,7 +531,7 @@ def main():
                 v.additional_traits.append("legacyLaunch")
             v.additional_traits.append("texturepacks")
 
-        v.write(out_filename)
+        route_meta_version_urls(v).write(out_filename)
 
     for lwjglVersionVariant in lwjglVersionVariants:
         decided_variant = None

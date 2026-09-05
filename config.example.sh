@@ -1,5 +1,6 @@
 export META_UPSTREAM_DIR=upstream
 export META_LAUNCHER_DIR=launcher
+export BMCLAPI_BASE_URL=https://bmclapi2.bangbang93.com
 export DEPLOY_TO_FOLDER=false
 export DEPLOY_FOLDER=/app/public/v1
 export DEPLOY_FOLDER_USER=http

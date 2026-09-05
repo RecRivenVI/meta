@@ -13,8 +13,10 @@ from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from pprint import pprint
+from urllib.parse import quote
 
 from pydantic import ValidationError
+import requests
 
 from meta.common import (
     upstream_path,
@@ -24,6 +26,12 @@ from meta.common import (
     eprint,
     file_hash,
     get_file_sha1_from_file,
+)
+from meta.common.bmclapi import (
+    BMCLAPI_FORGE_API_URL,
+    BMCLAPI_MAVEN_URL,
+    BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    route_download_url,
 )
 from meta.common.forge import (
     JARS_DIR,
@@ -62,23 +70,121 @@ LEGACYINFO_PATH = os.path.join(UPSTREAM_DIR, LEGACYINFO_FILE)
 sess = default_session()
 
 
-def get_single_forge_files_manifest(longversion):
+BMCL_FORGE_MAVEN_METADATA_URL = (
+    f"{BMCLAPI_MAVEN_URL}net/minecraftforge/forge/maven-metadata.json"
+)
+OFFICIAL_FORGE_MAVEN_METADATA_URL = (
+    "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json"
+)
+BMCL_FORGE_PROMOTIONS_URL = (
+    f"{BMCLAPI_MAVEN_URL}net/minecraftforge/forge/promotions_slim.json"
+)
+OFFICIAL_FORGE_PROMOTIONS_URL = (
+    "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+)
+
+bmcl_forge_builds = {}
+
+
+def get_json_with_fallback(preferred_url, fallback_url):
+    preferred = None
+    try:
+        response = sess.get(
+            preferred_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        preferred = response.json()
+    except (requests.RequestException, ValueError) as error:
+        eprint(f"BMCLAPI request failed, trying official Forge source: {error}")
+
+    try:
+        response = sess.get(
+            fallback_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        fallback = response.json()
+    except (requests.RequestException, ValueError):
+        if preferred is not None:
+            return preferred
+        raise
+
+    if preferred is not None and preferred == fallback:
+        return preferred
+
+    if preferred is not None:
+        eprint(
+            "BMCLAPI Forge index differs from the official index; "
+            "keeping the official version semantics"
+        )
+    return fallback
+
+
+def get_bmcl_forge_builds(mc_version):
+    if mc_version in bmcl_forge_builds:
+        return bmcl_forge_builds[mc_version]
+
+    url = f"{BMCLAPI_FORGE_API_URL}/minecraft/{quote(mc_version, safe='')}"
+    response = sess.get(url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    builds = response.json()
+    if not isinstance(builds, list):
+        raise ValueError(f"Unexpected BMCLAPI Forge build list for {mc_version}")
+    bmcl_forge_builds[mc_version] = builds
+    return builds
+
+
+def get_single_forge_files_manifest(longversion, mc_version=None):
     print(f"Getting Forge manifest for {longversion}")
     path_thing = UPSTREAM_DIR + "/forge/files_manifests/%s.json" % longversion
     files_manifest_file = Path(path_thing)
     from_file = False
-    if files_manifest_file.is_file():
-        with open(path_thing, "r") as f:
-            files_json = json.load(f)
+    files_json = None
+
+    mc_version = mc_version or longversion.split("-", 1)[0]
+    try:
+        builds = get_bmcl_forge_builds(mc_version)
+        build = None
+        for candidate in builds:
+            branch = candidate.get("branch")
+            candidate_longversion = "%s-%s" % (
+                candidate.get("mcversion"),
+                candidate.get("version"),
+            )
+            if branch:
+                candidate_longversion += "-%s" % branch
+            if candidate_longversion == longversion:
+                build = candidate
+                break
+
+        if build is None:
+            raise ValueError(f"BMCLAPI has no Forge build {longversion}")
+
+        classifiers = {}
+        for file in build.get("files", []):
+            classifier = file.get("category")
+            extension = file.get("format")
+            file_hash = file.get("hash")
+            if classifier and extension and file_hash:
+                classifiers.setdefault(classifier, {})[extension] = file_hash
+        if not classifiers:
+            raise ValueError(f"BMCLAPI has no Forge files for {longversion}")
+
+        # Adapt BMCLAPI's build response to the existing Forge meta.json shape.
+        files_json = {"classifiers": classifiers}
+    except (requests.RequestException, ValueError, KeyError) as error:
+        eprint(f"BMCLAPI Forge manifest unavailable for {longversion}: {error}")
+        if files_manifest_file.is_file():
+            with open(path_thing, "r") as f:
+                files_json = json.load(f)
             from_file = True
-    else:
-        file_url = (
-            "https://files.minecraftforge.net/net/minecraftforge/forge/%s/meta.json"
-            % longversion
-        )
-        r = sess.get(file_url)
-        r.raise_for_status()
-        files_json = r.json()
+        else:
+            file_url = (
+                "https://files.minecraftforge.net/net/minecraftforge/forge/%s/meta.json"
+                % longversion
+            )
+            r = sess.get(file_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+            r.raise_for_status()
+            files_json = r.json()
 
     ret_dict = dict()
 
@@ -106,7 +212,7 @@ def get_single_forge_files_manifest(longversion):
                 continue
             assert type(classifier) == str
             processed_hash = re.sub(r"\W", "", hashtype)
-            if not len(processed_hash) == 32:
+            if len(processed_hash) not in (32, 40):
                 print(
                     "%s: Skipping invalid hash for extension %s:"
                     % (longversion, extension)
@@ -137,6 +243,32 @@ def get_single_forge_files_manifest(longversion):
     return ret_dict
 
 
+def select_forge_download_url(url):
+    candidates = [route_download_url(url)]
+    if url not in candidates:
+        candidates.append(url)
+
+    for candidate in candidates:
+        try:
+            response = sess.get(
+                candidate + ".sha1", timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+            )
+            response.raise_for_status()
+            return candidate, response.text.strip()
+        except requests.RequestException as error:
+            if candidate != candidates[-1]:
+                eprint(f"BMCLAPI Forge checksum unavailable, trying official: {error}")
+
+        try:
+            response = sess.head(candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return candidate, None
+        except requests.RequestException:
+            pass
+
+    return url, None
+
+
 def process_forge_version(version, jar_path):
     installer_info_path = (
         UPSTREAM_DIR + "/forge/installer_info/%s.json" % version.long_version
@@ -148,18 +280,11 @@ def process_forge_version(version, jar_path):
         UPSTREAM_DIR + "/forge/version_manifests/%s.json" % version.long_version
     )
 
-    new_sha1 = None
     sha1_file = jar_path + ".sha1"
     fileSha1 = get_file_sha1_from_file(jar_path, sha1_file)
-    try:
-        rfile = sess.get(version.url() + ".sha1")
-        rfile.raise_for_status()
-        new_sha1 = rfile.text.strip()
-        if fileSha1 != new_sha1:
-            remove_files([jar_path, profile_path, installer_info_path, sha1_file])
-    except Exception as e:
-        eprint("Failed to check sha1 %s" % version.url())
-        eprint("Error is %s" % e)
+    download_url, new_sha1 = select_forge_download_url(version.url())
+    if new_sha1 is not None and fileSha1 != new_sha1:
+        remove_files([jar_path, profile_path, installer_info_path, sha1_file])
 
     installer_refresh_required = not os.path.isfile(profile_path) or not os.path.isfile(
         installer_info_path
@@ -168,16 +293,15 @@ def process_forge_version(version, jar_path):
     if installer_refresh_required:
         # grab the installer if it's not there
         if not os.path.isfile(jar_path):
-            eprint("Downloading %s" % version.url())
-            download_binary_file(sess, jar_path, version.url())
+            eprint("Downloading %s" % download_url)
+            download_binary_file(
+                sess,
+                jar_path,
+                download_url,
+                timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+            )
             if new_sha1 is None:
-                try:
-                    rfile = sess.get(version.url() + ".sha1")
-                    rfile.raise_for_status()
-                    new_sha1 = rfile.text.strip()
-                except Exception as e:
-                    eprint("Failed to download new sha1 %s" % version.url())
-                    eprint("Error is %s" % e)
+                download_url, new_sha1 = select_forge_download_url(version.url())
             if new_sha1 is not None:  # this is in case the fetch failed
                 with open(sha1_file, "w") as file:
                     file.write(new_sha1)
@@ -243,18 +367,16 @@ def process_forge_version(version, jar_path):
 
 def main():
     # get the remote version list fragments
-    r = sess.get(
-        "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json"
+    main_json = get_json_with_fallback(
+        BMCL_FORGE_MAVEN_METADATA_URL,
+        OFFICIAL_FORGE_MAVEN_METADATA_URL,
     )
-    r.raise_for_status()
-    main_json = r.json()
     assert type(main_json) == dict
 
-    r = sess.get(
-        "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+    promotions_json = get_json_with_fallback(
+        BMCL_FORGE_PROMOTIONS_URL,
+        OFFICIAL_FORGE_PROMOTIONS_URL,
     )
-    r.raise_for_status()
-    promotions_json = r.json()
     assert type(promotions_json) == dict
 
     promoted_key_expression = re.compile(
@@ -311,7 +433,7 @@ def main():
                 assert match
             assert match.group("mc") == mc_version
 
-            files = get_single_forge_files_manifest(long_version)
+            files = get_single_forge_files_manifest(long_version, mc_version)
 
             build = int(match.group("build"))
             version = match.group("ver")
@@ -397,7 +519,13 @@ def main():
                 if not os.path.isfile(LEGACYINFO_PATH):
                     # grab the jar/zip if it's not there
                     if not os.path.isfile(jar_path):
-                        download_binary_file(sess, jar_path, version.url())
+                        download_url, _ = select_forge_download_url(version.url())
+                        download_binary_file(
+                            sess,
+                            jar_path,
+                            download_url,
+                            timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+                        )
                     # find the latest timestamp in the zip file
                     tstamp = datetime.fromtimestamp(0)
                     with zipfile.ZipFile(jar_path) as jar:

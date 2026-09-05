@@ -5,6 +5,7 @@ from typing import Optional
 from functools import reduce
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path
+from meta.common.bmclapi import route_download_url
 
 from meta.common.java import (
     JAVA_MINECRAFT_COMPONENT,
@@ -289,6 +290,10 @@ def writeJavas(javas: dict[int, list[JavaRuntimeMeta]], uid: str):
 
     # small hack to sort the versions after major
     javas = dict(sorted(javas.items(), key=lambda item: item[0]))
+    for runtimes in javas.values():
+        for runtime in runtimes:
+            runtime.url = route_download_url(runtime.url)
+
     timestamps: dict[int, datetime.datetime | None] = {}
     prevDate: datetime.datetime | None = None
     for major, runtimes in javas.items():

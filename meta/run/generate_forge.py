@@ -5,6 +5,7 @@ from operator import attrgetter
 from typing import Collection
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path, eprint
+from meta.common.bmclapi import route_meta_version_urls
 from meta.common.forge import (
     FORGE_COMPONENT,
     INSTALLER_MANIFEST_DIR,
@@ -448,7 +449,9 @@ def main():
 
                 v = version_from_legacy(legacy_info_list.number[str(build)], version)
 
-        v.write(os.path.join(LAUNCHER_DIR, FORGE_COMPONENT, f"{v.version}.json"))
+        route_meta_version_urls(v).write(
+            os.path.join(LAUNCHER_DIR, FORGE_COMPONENT, f"{v.version}.json")
+        )
 
         recommended_versions.sort()
 

@@ -7,6 +7,7 @@ from meta.common import (
     upstream_path,
     transform_maven_key,
 )
+from meta.common.bmclapi import BMCLAPI_MAVEN_URL, route_meta_version_urls
 from meta.common.fabric import (
     JARS_DIR,
     INSTALLER_INFO_DIR,
@@ -56,9 +57,12 @@ def process_loader_version(entry) -> MetaVersion:
     v.libraries.extend(installer_info.libraries.client)
     loader_lib = Library(
         name=GradleSpecifier.from_string(entry["maven"]),
-        url="https://maven.fabricmc.net",
+        url=jar_info.maven_url or BMCLAPI_MAVEN_URL,
     )
     v.libraries.append(loader_lib)
+    route_meta_version_urls(v)
+    if jar_info.maven_url:
+        loader_lib.url = jar_info.maven_url
     return v
 
 
@@ -78,9 +82,12 @@ def process_intermediary_version(entry) -> MetaVersion:
     v.volatile = True
     intermediary_lib = Library(
         name=GradleSpecifier.from_string(entry["maven"]),
-        url="https://maven.fabricmc.net",
+        url=jar_info.maven_url or BMCLAPI_MAVEN_URL,
     )
     v.libraries.append(intermediary_lib)
+    route_meta_version_urls(v)
+    if jar_info.maven_url:
+        intermediary_lib.url = jar_info.maven_url
     return v
 
 

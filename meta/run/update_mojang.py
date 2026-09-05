@@ -3,7 +3,15 @@ import json
 import os
 import zipfile
 
+import requests
+
 from meta.common import upstream_path, ensure_upstream_dir, default_session
+from meta.common.bmclapi import (
+    BMCLAPI_MOJANG_JAVA_URL,
+    BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    BMCLAPI_MOJANG_VERSION_MANIFEST_URL,
+    route_download_url,
+)
 from meta.common.http import download_binary_file
 from meta.common.mojang import (
     BASE_DIR,
@@ -33,9 +41,54 @@ ensure_upstream_dir(ASSETS_DIR)
 sess = default_session()
 
 
+def get_mojang_response(url, fallback_url=None):
+    candidates = [route_download_url(url)]
+    if url not in candidates:
+        candidates.append(url)
+    if fallback_url is not None and fallback_url not in candidates:
+        candidates.append(fallback_url)
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            response = sess.get(
+                candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+            )
+            response.raise_for_status()
+            return response
+        except requests.RequestException as error:
+            last_error = error
+            if candidate != candidates[-1]:
+                print(f"BMCLAPI request failed, trying fallback: {candidate}")
+
+    assert last_error is not None
+    raise last_error
+
+
+def download_mojang_file(path, url):
+    candidates = [route_download_url(url)]
+    if url not in candidates:
+        candidates.append(url)
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            download_binary_file(
+                sess, path, candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+            )
+            return
+        except requests.RequestException as error:
+            last_error = error
+            if candidate != candidates[-1]:
+                print(f"BMCLAPI download failed, trying fallback: {candidate}")
+
+    assert last_error is not None
+    raise last_error
+
+
 def fetch_zipped_version(path, url):
     zip_path = f"{path}.zip"
-    download_binary_file(sess, zip_path, url)
+    download_mojang_file(zip_path, url)
     with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
             if info.filename.endswith(".json"):
@@ -54,8 +107,7 @@ def fetch_zipped_version(path, url):
 
 
 def fetch_modified_version(path, version):
-    r = sess.get(version.url)
-    r.raise_for_status()
+    r = get_mojang_response(version.url)
     version_json = r.json()
 
     version_json["releaseTime"] = version_json["releaseTime"] + "T00:00:00+02:00"
@@ -75,8 +127,7 @@ def fetch_modified_version(path, version):
 
 
 def fetch_version(path, url):
-    r = sess.get(url)
-    r.raise_for_status()
+    r = get_mojang_response(url)
     version_json = r.json()
 
     with open(path, "w", encoding="utf-8") as f:
@@ -89,8 +140,7 @@ MOJANG_JAVA_URL = "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0c
 
 
 def update_javas():
-    r = sess.get(MOJANG_JAVA_URL)
-    r.raise_for_status()
+    r = get_mojang_response(BMCLAPI_MOJANG_JAVA_URL, MOJANG_JAVA_URL)
 
     remote_javas = JavaIndex(__root__=r.json())
 
@@ -123,8 +173,10 @@ def fetch_modified_version_concurrent(old_snapshots, x):
 
 def main():
     # get the remote version list
-    r = sess.get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
-    r.raise_for_status()
+    r = get_mojang_response(
+        BMCLAPI_MOJANG_VERSION_MANIFEST_URL,
+        "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+    )
 
     remote_versions = MojangIndexWrap(MojangIndex(**r.json()))
     remote_ids = set(remote_versions.versions.keys())

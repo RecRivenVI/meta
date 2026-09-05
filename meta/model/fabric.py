@@ -38,3 +38,5 @@ class FabricInstallerDataV1(MetaBase):
 
 class FabricJarInfo(MetaBase):
     release_time: Optional[datetime] = Field(alias="releaseTime")
+    # Populated by the updater when the coordinate was fetched from a fallback.
+    maven_url: Optional[str] = Field(None, alias="mavenUrl")

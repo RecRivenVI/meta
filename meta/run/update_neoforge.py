@@ -16,6 +16,7 @@ from pprint import pprint
 import urllib.parse
 
 from pydantic import ValidationError
+import requests
 
 from meta.common import (
     upstream_path,
@@ -25,6 +26,11 @@ from meta.common import (
     eprint,
     file_hash,
     get_file_sha1_from_file,
+)
+from meta.common.bmclapi import (
+    BMCLAPI_NEOFORGE_META_URL,
+    BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+    route_download_url,
 )
 from meta.common.http import download_binary_file
 from meta.common.neoforge import (
@@ -69,18 +75,30 @@ def get_single_forge_files_manifest(longversion, artifact: str):
     path_thing = UPSTREAM_DIR + "/neoforge/files_manifests/%s.json" % longversion
     files_manifest_file = Path(path_thing)
     from_file = False
-    if files_manifest_file.is_file():
-        with open(path_thing, "r") as f:
-            files_json = json.load(f)
-            from_file = True
-    else:
-        file_url = (
-            f"https://maven.neoforged.net/api/maven/details/releases/net%2Fneoforged%2F{artifact}%2F"
-            + urllib.parse.quote(longversion)
-        )
-        r = sess.get(file_url)
+    bmcl_file_url = (
+        f"{BMCLAPI_NEOFORGE_META_URL}/api/maven/details/releases/net/neoforged/"
+        f"{artifact}/{urllib.parse.quote(longversion, safe='')}"
+    )
+    official_file_url = (
+        f"https://maven.neoforged.net/api/maven/details/releases/net%2Fneoforged%2F"
+        f"{artifact}%2F{urllib.parse.quote(longversion, safe='')}"
+    )
+    try:
+        r = sess.get(bmcl_file_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
         r.raise_for_status()
         files_json = r.json()
+    except (requests.RequestException, ValueError) as error:
+        eprint(
+            f"BMCLAPI NeoForge manifest unavailable for {longversion}: {error}"
+        )
+        if files_manifest_file.is_file():
+            with open(path_thing, "r") as f:
+                files_json = json.load(f)
+                from_file = True
+        else:
+            r = sess.get(official_file_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+            r.raise_for_status()
+            files_json = r.json()
 
     ret_dict = dict()
 
@@ -116,12 +134,87 @@ def get_single_forge_files_manifest(longversion, artifact: str):
     return ret_dict
 
 
+def select_neoforge_download_url(url):
+    candidates = [route_download_url(url)]
+    if url not in candidates:
+        candidates.append(url)
+
+    for candidate in candidates:
+        try:
+            response = sess.get(
+                candidate + ".sha1", timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS
+            )
+            response.raise_for_status()
+            return candidate, response.text.strip()
+        except requests.RequestException as error:
+            if candidate != candidates[-1]:
+                eprint(
+                    "BMCLAPI NeoForge checksum unavailable, "
+                    f"trying official: {error}"
+                )
+
+        try:
+            response = sess.head(candidate, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return candidate, None
+        except requests.RequestException:
+            pass
+
+    return url, None
+
+
+def get_neoforge_version_list(artifact):
+    bmcl_url = (
+        f"{BMCLAPI_NEOFORGE_META_URL}/api/maven/details/releases/net/neoforged/"
+        f"{artifact}"
+    )
+    official_url = (
+        f"https://maven.neoforged.net/api/maven/versions/releases/"
+        f"net%2Fneoforged%2F{artifact}"
+    )
+
+    bmcl_versions = None
+    try:
+        response = sess.get(bmcl_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        details = response.json()
+        bmcl_versions = [
+            entry["name"]
+            for entry in details.get("files", [])
+            if entry.get("type") == "DIRECTORY"
+        ]
+    except (requests.RequestException, ValueError, KeyError) as error:
+        eprint(f"BMCLAPI NeoForge version list unavailable: {error}")
+
+    try:
+        response = sess.get(official_url, timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        official_versions = response.json()["versions"]
+    except requests.RequestException:
+        if bmcl_versions is not None:
+            return bmcl_versions
+        raise
+
+    if bmcl_versions is None:
+        return official_versions
+
+    if set(bmcl_versions) == set(official_versions):
+        # Keep the ordering produced by the existing official updater.
+        return official_versions
+
+    eprint(
+        f"BMCLAPI NeoForge {artifact} version list differs from the official "
+        "list; keeping the official version semantics"
+    )
+    return official_versions
+
+
 def process_neoforge_version(key, entry):
     eprint("Updating NeoForge %s" % key)
 
     version = NeoForgeVersion(entry)
     if version.url() is None:
-        eprint("Skipping %d with no valid files" % version.build)
+        eprint("Skipping %s with no valid files" % key)
         return
     if not version.uses_installer():
         eprint(f"version {version.long_version} does not use installer")
@@ -139,18 +232,11 @@ def process_neoforge_version(key, entry):
         UPSTREAM_DIR + "/neoforge/version_manifests/%s.json" % version.long_version
     )
 
-    new_sha1 = None
     sha1_file = jar_path + ".sha1"
     fileSha1 = get_file_sha1_from_file(jar_path, sha1_file)
-    try:
-        rfile = sess.get(version.url() + ".sha1")
-        rfile.raise_for_status()
-        new_sha1 = rfile.text.strip()
-        if fileSha1 != new_sha1:
-            remove_files([jar_path, profile_path, installer_info_path, sha1_file])
-    except Exception as e:
-        eprint("Failed to check sha1 %s" % version.url())
-        eprint("Error is %s" % e)
+    download_url, new_sha1 = select_neoforge_download_url(version.url())
+    if new_sha1 is not None and fileSha1 != new_sha1:
+        remove_files([jar_path, profile_path, installer_info_path, sha1_file])
 
     installer_refresh_required = not os.path.isfile(profile_path) or not os.path.isfile(
         installer_info_path
@@ -159,22 +245,21 @@ def process_neoforge_version(key, entry):
     if installer_refresh_required:
         # grab the installer if it's not there
         if not os.path.isfile(jar_path):
-            eprint("Downloading %s" % version.url())
+            eprint("Downloading %s" % download_url)
             try:
                 Path(jar_path).parent.mkdir(parents=True, exist_ok=True)
-                download_binary_file(sess, jar_path, version.url())
+                download_binary_file(
+                    sess,
+                    jar_path,
+                    download_url,
+                    timeout=BMCLAPI_REQUEST_TIMEOUT_SECONDS,
+                )
             except Exception as e:
                 eprint("Failed to download %s" % version.url())
                 eprint("Error is %s" % e)
                 return
             if new_sha1 is None:
-                try:
-                    rfile = sess.get(version.url() + ".sha1")
-                    rfile.raise_for_status()
-                    new_sha1 = rfile.text.strip()
-                except Exception as e:
-                    eprint("Failed to download new sha1 %s" % version.url())
-                    eprint("Error is %s" % e)
+                download_url, new_sha1 = select_neoforge_download_url(version.url())
             if new_sha1 is not None:  # this is in case the fetch failed
                 with open(sha1_file, "w") as file:
                     file.write(new_sha1)
@@ -233,19 +318,11 @@ def process_neoforge_version(key, entry):
 
 def main():
     # get the 1.20.1 remote version list fragments
-    r = sess.get(
-        "https://maven.neoforged.net/api/maven/versions/releases/net%2Fneoforged%2Fforge"
-    )
-    r.raise_for_status()
-    main_json = r.json()["versions"]
+    main_json = get_neoforge_version_list("forge")
     assert type(main_json) == list
 
     # get the new remote version list fragments
-    r = sess.get(
-        "https://maven.neoforged.net/api/maven/versions/releases/net%2Fneoforged%2Fneoforge"
-    )
-    r.raise_for_status()
-    new_main_json = r.json()["versions"]
+    new_main_json = get_neoforge_version_list("neoforge")
     assert type(new_main_json) == list
 
     main_json += new_main_json

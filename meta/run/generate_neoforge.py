@@ -5,6 +5,7 @@ from operator import attrgetter
 from typing import Collection
 
 from meta.common import ensure_component_dir, launcher_path, upstream_path, eprint
+from meta.common.bmclapi import route_meta_version_urls
 from meta.common.neoforge import (
     NEOFORGE_COMPONENT,
     INSTALLER_MANIFEST_DIR,
@@ -151,7 +152,9 @@ def main():
                 % (key, profile.minecraft)
             )
             continue
-        v.write(os.path.join(LAUNCHER_DIR, NEOFORGE_COMPONENT, f"{v.version}.json"))
+        route_meta_version_urls(v).write(
+            os.path.join(LAUNCHER_DIR, NEOFORGE_COMPONENT, f"{v.version}.json")
+        )
 
         recommended_versions.sort()
 
